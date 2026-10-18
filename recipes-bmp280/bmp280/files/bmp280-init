@@ -1,0 +1,94 @@
+#!/bin/sh
+# BMP280 firstboot service — Phase 4 Route A
+# Compiles driver + core3_loop on first boot (uses kernel-devsrc),
+# registers sensor, loads driver, starts Core 3 writer.
+#
+# The build is DETACHED (background worker) so it never blocks the boot
+# sequence — blocking rc5.d on a ~1min kernel compile risks watchdog/boot
+# reset. Boot completes fast (WiFi/SSH up); driver comes up moments later.
+# Idempotent: rebuild only if binaries missing (survives reflash).
+
+SRC=/root/bmp280
+KREL=$(uname -r)
+KBUILD=/lib/modules/$KREL/build
+I2CBUS=/sys/bus/i2c/devices/i2c-1
+
+log() { echo "bmp280-init: $1"; }
+
+do_build() {
+    # 1. kernel headers (item 4) — only if helper tools missing
+    if [ ! -x "$KBUILD/scripts/basic/fixdep" ]; then
+        log "preparing kernel headers (scripts prepare)..."
+        ( cd "$KBUILD" && make scripts prepare ) >/tmp/bmp280-prepare.log 2>&1
+    fi
+
+    # 2. build .ko
+    if [ ! -f "$SRC/bmp280_driver.ko" ]; then
+        log "building bmp280_driver.ko..."
+        ( cd "$SRC" && make ) >/tmp/bmp280-make.log 2>&1
+    fi
+
+    # 3. build userspace binaries
+    [ -x "$SRC/core3_loop" ] || ( cd "$SRC" && gcc -O2 -o core3_loop core3_loop.c ) >/tmp/bmp280-gcc.log 2>&1
+    [ -x "$SRC/read_ring" ]  || ( cd "$SRC" && gcc -O2 -o read_ring  read_ring.c )  >>/tmp/bmp280-gcc.log 2>&1
+}
+
+do_bringup() {
+    # 4. register sensor under our unique name (item 5 — until DT node patch done)
+    #    "bmp280_ipc" so the in-tree mainline bmp280 iio driver can't match/steal it
+    if [ ! -d "$I2CBUS/1-0076" ]; then
+        log "registering BMP280 (bmp280_ipc) at 0x76..."
+        echo bmp280_ipc 0x76 > "$I2CBUS/new_device" 2>/dev/null
+    fi
+
+    # 5. load driver
+    if [ ! -c /dev/bmp280 ]; then
+        log "loading bmp280_driver.ko..."
+        insmod "$SRC/bmp280_driver.ko" 2>/dev/null
+    fi
+
+    # 6. start Core 3 writer (background, pinned to isolated core 3)
+    if ! pidof core3_loop >/dev/null 2>&1; then
+        log "starting core3_loop on Core 3..."
+        taskset -c 3 "$SRC/core3_loop" >/tmp/core3_loop.log 2>&1 &
+    fi
+}
+
+# Heavy path: compile (if needed) then bring the pipeline up.
+# Runs detached from boot — see do_start.
+do_worker() {
+    do_build
+    do_bringup
+    log "worker done — pipeline up."
+}
+
+do_start() {
+    # Already up? nothing to do.
+    if [ -c /dev/bmp280 ] && pidof core3_loop >/dev/null 2>&1; then
+        log "already running."
+        return 0
+    fi
+    # Detach worker so boot is never blocked by the compile.
+    log "launching bringup worker (detached)..."
+    setsid "$0" worker >/tmp/bmp280-worker.log 2>&1 &
+}
+
+do_stop() {
+    killall core3_loop 2>/dev/null
+    killall make cc1 2>/dev/null            # kill any in-flight build
+    [ -c /dev/bmp280 ] && rmmod bmp280_driver 2>/dev/null
+    log "stopped."
+}
+
+case "$1" in
+    start)   do_start ;;
+    worker)  do_worker ;;                   # internal — invoked detached by do_start
+    stop)    do_stop ;;
+    restart) do_stop; sleep 1; do_start ;;
+    status)
+        [ -c /dev/bmp280 ] && echo "driver: loaded" || echo "driver: NOT loaded"
+        pidof core3_loop >/dev/null 2>&1 && echo "core3_loop: running (pid $(pidof core3_loop))" || echo "core3_loop: NOT running"
+        ;;
+    *) echo "Usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac
+exit 0

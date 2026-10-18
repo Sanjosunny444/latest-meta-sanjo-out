@@ -1,0 +1,78 @@
+#!/bin/sh
+# telemetry_daemon firstboot/boot service — Phase 7
+# Same sysvinit pattern as bmp280-init (see project_telemetry/bmp280/bmp280-init)
+# — chosen deliberately over systemd: this image has no systemd at all, and
+# switching platforms just for one daemon's auto-start isn't worth it. See
+# phase-7.md / the project conversation log for the full reasoning.
+#
+# Waiting for /dev/bmp280 used to happen HERE, in shell, with its own
+# timeout. Moved into telemetry_daemon.c itself (2026-10-06) — single
+# source of truth for the retry logic, uses the daemon's own real log
+# instead of a separate /tmp worker log, and the daemon is now robust on
+# its own regardless of how/when it gets started, not dependent on this
+# script having pre-checked anything. This script's only remaining job is
+# the BUILD step, which still needs to run detached so a slow firstboot
+# compile never blocks boot — once built, launching the binary is cheap
+# and immediate, the binary handles its own waiting from there.
+
+export TZ='IST-5:30'
+
+SRC=/root/telemetry_daemon
+BIN=$SRC/telemetry_daemon
+WEBUI=$SRC/web_ui
+PIDFILE=/var/run/telemetry_daemon.pid
+
+log() { echo "telemetry-init: $1"; }
+
+do_build() {
+    [ -x "$BIN" ] || ( cd "$SRC" && make ) >/tmp/telemetry-make.log 2>&1
+    [ -x "$WEBUI" ] || ( cd "$SRC" && gcc -O2 -Wall -o web_ui web_ui.c -lsqlite3 ) >>/tmp/telemetry-make.log 2>&1
+}
+
+do_worker() {
+    do_build
+    log "starting telemetry_daemon (it waits for /dev/bmp280 itself now)..."
+    "$BIN"   # daemonizes itself (double-fork) — no & needed here
+    "$WEBUI" &   # web dashboard on port 8080 — runs in background
+    log "worker done."
+}
+
+do_start() {
+    if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+        log "already running."
+        return 0
+    fi
+    log "launching bringup worker (detached)..."
+    setsid "$0" worker >/tmp/telemetry-worker.log 2>&1 &
+}
+
+do_stop() {
+    if [ -f "$PIDFILE" ]; then
+        pid=$(cat "$PIDFILE")
+        kill -TERM "$pid" 2>/dev/null
+        # shutdown is fast now (~1s, all threads use interruptible_sleep) —
+        # a short wait is enough; kill -9 fallback only if something's stuck
+        sleep 3
+        kill -0 "$pid" 2>/dev/null && { log "still alive, forcing"; kill -9 "$pid" 2>/dev/null; }
+    fi
+    killall telemetry_daemon 2>/dev/null   # catch any orphan with no pidfile
+    killall web_ui 2>/dev/null
+    rm -f "$PIDFILE"
+    log "stopped."
+}
+
+case "$1" in
+    start)   do_start ;;
+    worker)  do_worker ;;   # internal — invoked detached by do_start
+    stop)    do_stop ;;
+    restart) do_stop; sleep 1; do_start ;;
+    status)
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+            echo "telemetry_daemon: running (pid $(cat "$PIDFILE"))"
+        else
+            echo "telemetry_daemon: NOT running"
+        fi
+        ;;
+    *) echo "Usage: $0 {start|stop|restart|status}"; exit 1 ;;
+esac
+exit 0

@@ -1,0 +1,575 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telemetry Dashboard</title>
+<style>
+:root {
+  --bg: #1a1a2e;
+  --bg2: #16213e;
+  --card: #0f3460;
+  --accent: #e94560;
+  --text: #eee;
+  --text2: #aaa;
+  --ok: #2ecc71;
+  --warn: #f39c12;
+  --bad: #e74c3c;
+  --border: #234;
+}
+* { margin:0; padding:0; box-sizing:border-box; }
+body { font-family: 'Segoe UI',system-ui,sans-serif; background:var(--bg); color:var(--text); display:flex; min-height:100vh; }
+
+/* Sidebar */
+.sidebar { width:200px; background:var(--bg2); padding:16px 0; flex-shrink:0; border-right:1px solid var(--border); }
+.sidebar h2 { padding:0 16px 12px; font-size:14px; color:var(--accent); text-transform:uppercase; letter-spacing:1px; }
+.sidebar a { display:block; padding:10px 16px; color:var(--text2); text-decoration:none; font-size:14px; border-left:3px solid transparent; }
+.sidebar a:hover, .sidebar a.active { background:var(--card); color:var(--text); border-left-color:var(--accent); }
+
+/* Main */
+.main { flex:1; padding:20px; overflow-y:auto; }
+.section { display:none; }
+.section.active { display:block; }
+h1 { font-size:20px; margin-bottom:16px; color:var(--accent); }
+
+/* Cards */
+.cards { display:grid; grid-template-columns:repeat(auto-fill,minmax(200px,1fr)); gap:12px; margin-bottom:20px; }
+.card { background:var(--card); border-radius:8px; padding:14px; }
+.card label { font-size:11px; color:var(--text2); text-transform:uppercase; letter-spacing:0.5px; display:block; margin-bottom:4px; }
+.card .val { font-size:22px; font-weight:600; }
+.card .val.ok { color:var(--ok); }
+.card .val.warn { color:var(--warn); }
+.card .val.bad { color:var(--bad); }
+
+/* Log */
+.log-box { background:var(--bg2); border-radius:6px; padding:12px; font-family:monospace; font-size:12px; max-height:400px; overflow-y:auto; }
+.log-line { padding:2px 0; border-bottom:1px solid #1a1a2e; }
+.log-ts { color:var(--accent); margin-right:8px; }
+
+/* Table */
+table { width:100%; border-collapse:collapse; font-size:13px; }
+th, td { padding:8px 10px; text-align:left; border-bottom:1px solid var(--border); }
+th { background:var(--bg2); color:var(--accent); cursor:pointer; user-select:none; position:sticky; top:0; }
+th:hover { color:var(--text); }
+td { background:var(--card); }
+
+/* Filters + pagination */
+.toolbar { display:flex; gap:10px; align-items:center; margin-bottom:12px; flex-wrap:wrap; }
+select, button { background:var(--bg2); color:var(--text); border:1px solid var(--border); padding:6px 10px; border-radius:4px; font-size:13px; cursor:pointer; }
+button:hover { background:var(--card); }
+.page-info { color:var(--text2); font-size:13px; }
+
+/* Status dot */
+.dot { display:inline-block; width:8px; height:8px; border-radius:50%; margin-right:6px; }
+.dot.on { background:var(--ok); }
+.dot.off { background:var(--bad); }
+
+/* Mobile */
+@media(max-width:600px) {
+  body { flex-direction:column; }
+  .sidebar { width:100%; display:flex; overflow-x:auto; padding:8px; border-right:none; border-bottom:1px solid var(--border); }
+  .sidebar h2 { display:none; }
+  .sidebar a { padding:8px 12px; white-space:nowrap; border-left:none; border-bottom:2px solid transparent; }
+  .sidebar a.active { border-bottom-color:var(--accent); }
+  .main { padding:12px; }
+  .cards { grid-template-columns:1fr 1fr; }
+}
+.chart-card { background:var(--card); border-radius:8px; padding:14px; }
+.chart-card h4 { color:var(--accent); margin-bottom:6px; font-size:13px; text-transform:uppercase; }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+</head>
+<body>
+
+<nav class="sidebar">
+  <h2>Dashboard</h2>
+  <a href="#overview" class="active" onclick="show('overview')">Overview</a>
+  <a href="#mqtt" onclick="show('mqtt')">MQTT</a>
+  <a href="#modbus" onclick="show('modbus')">Modbus</a>
+  <a href="#core3" onclick="show('core3')">Core3 Monitor</a>
+  <a href="#fdd" onclick="show('fdd')">FDD</a>
+  <a href="#system" onclick="show('system')">System</a>
+  <a href="#analysis" onclick="show('analysis')">FDD Analysis</a>
+  <a href="#sqlite" onclick="show('sqlite')">SQLite Viewer</a>
+</nav>
+
+<div class="main">
+
+  <!-- Overview -->
+  <div id="overview" class="section active">
+    <h1>Overview</h1>
+    <div class="cards" id="overview-cards"></div>
+    <h3 style="margin-bottom:8px;color:var(--text2)">Recent Activity (All Threads)</h3>
+    <div class="log-box" id="overview-logs"></div>
+  </div>
+
+  <!-- MQTT -->
+  <div id="mqtt" class="section">
+    <h1>MQTT Thread</h1>
+    <div class="cards" id="mqtt-cards"></div>
+    <h3 style="margin-bottom:8px;color:var(--text2)">MQTT Log</h3>
+    <div class="log-box" id="mqtt-logs"></div>
+  </div>
+
+  <!-- Modbus -->
+  <div id="modbus" class="section">
+    <h1>Modbus TCP Server</h1>
+    <div class="cards" id="modbus-cards"></div>
+    <h3 style="margin-bottom:8px;color:var(--text2)">Modbus Log</h3>
+    <div class="log-box" id="modbus-logs"></div>
+  </div>
+
+  <!-- Core3 Monitor -->
+  <div id="core3" class="section">
+    <h1>Core3 Monitor</h1>
+    <div class="cards" id="core3-cards"></div>
+    <h3 style="margin-bottom:8px;color:var(--text2)">Core3 Log</h3>
+    <div class="log-box" id="core3-logs"></div>
+  </div>
+
+  <!-- FDD -->
+  <div id="fdd" class="section">
+    <h1>Fault Detection & Diagnostics</h1>
+    <div class="cards" id="fdd-cards"></div>
+    <h3 style="margin-bottom:8px;color:var(--text2)">FDD Log</h3>
+    <div class="log-box" id="fdd-logs"></div>
+  </div>
+
+  <!-- System -->
+  <div id="system" class="section">
+    <h1>System Info</h1>
+    <div class="cards" id="system-cards"></div>
+  </div>
+
+  <!-- FDD Analysis -->
+  <div id="analysis" class="section">
+    <h1>FDD Analysis</h1>
+    <div class="toolbar">
+      <button onclick="loadAnalysis()">Refresh Charts</button>
+      <span class="page-info" id="analysis-info"></span>
+    </div>
+
+    <!-- Summary bar chart: fault count per algorithm -->
+    <div style="background:var(--card);border-radius:8px;padding:16px;margin-bottom:16px">
+      <h3 style="color:var(--text2);margin-bottom:8px">Fault Count by Algorithm</h3>
+      <canvas id="chart-summary" height="200"></canvas>
+    </div>
+
+    <!-- Timeline scatter: all faults over time -->
+    <div style="background:var(--card);border-radius:8px;padding:16px;margin-bottom:16px">
+      <h3 style="color:var(--text2);margin-bottom:8px">Fault Timeline (Last 200 Events)</h3>
+      <canvas id="chart-timeline" height="250"></canvas>
+    </div>
+
+    <!-- Per-algorithm score charts -->
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px" id="algo-charts-grid">
+    </div>
+  </div>
+
+  <!-- SQLite Viewer -->
+  <div id="sqlite" class="section">
+    <h1>FDD Events (SQLite)</h1>
+    <div class="toolbar">
+      <select id="filter-algo"><option value="">All Algorithms</option></select>
+      <select id="filter-sensor"><option value="">All Sensors</option></select>
+      <button onclick="loadEvents(1)">Apply Filter</button>
+      <button onclick="exportCSV()">Download CSV</button>
+      <span class="page-info" id="page-info"></span>
+    </div>
+    <div style="overflow-x:auto">
+      <table>
+        <thead id="events-head">
+          <tr>
+            <th data-col="id">ID</th>
+            <th data-col="ts">Timestamp</th>
+            <th data-col="algorithm">Algorithm</th>
+            <th data-col="sensor">Sensor</th>
+            <th data-col="value">Value</th>
+            <th data-col="score">Score</th>
+            <th data-col="fault_label">Fault</th>
+          </tr>
+        </thead>
+        <tbody id="events-body"></tbody>
+      </table>
+    </div>
+    <div class="toolbar" style="margin-top:8px">
+      <button id="btn-prev" onclick="loadEvents(currentPage-1)">Prev</button>
+      <button id="btn-next" onclick="loadEvents(currentPage+1)">Next</button>
+    </div>
+  </div>
+
+</div>
+
+<script>
+let data = {};
+let currentPage = 1;
+let sortCol = 'id';
+let sortDir = 'DESC';
+
+function show(id) {
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.sidebar a').forEach(a => a.classList.remove('active'));
+  document.getElementById(id).classList.add('active');
+  document.querySelector(`a[href="#${id}"]`).classList.add('active');
+  if (id === 'sqlite') loadEvents(1);
+  if (id === 'analysis') loadAnalysis();
+}
+
+function card(label, value, cls) {
+  return `<div class="card"><label>${label}</label><div class="val ${cls||''}">${value}</div></div>`;
+}
+
+function dot(on) {
+  return `<span class="dot ${on ? 'on' : 'off'}"></span>${on ? 'Connected' : 'Disconnected'}`;
+}
+
+function healthStr(h) {
+  if (h === 0) return ['Healthy', 'ok'];
+  if (h === 1) return ['Degraded', 'warn'];
+  return ['Given Up', 'bad'];
+}
+
+function fmtUptime(sec) {
+  let d = Math.floor(sec/86400), h = Math.floor((sec%86400)/3600),
+      m = Math.floor((sec%3600)/60);
+  return d > 0 ? `${d}d ${h}h ${m}m` : `${h}h ${m}m`;
+}
+
+function renderLogs(containerId, entries) {
+  let el = document.getElementById(containerId);
+  if (!entries || !entries.length) { el.innerHTML = '<div class="log-line" style="color:var(--text2)">No logs yet</div>'; return; }
+  el.innerHTML = entries.map(e =>
+    `<div class="log-line"><span class="log-ts">[${e.ts}]</span>${e.msg}</div>`
+  ).reverse().join('');
+}
+
+function renderAllLogs(containerId, logs) {
+  let el = document.getElementById(containerId);
+  let all = [];
+  for (let thread of ['mqtt','modbus','core3','fdd']) {
+    if (logs[thread]) {
+      logs[thread].forEach(e => all.push({...e, thread}));
+    }
+  }
+  all.sort((a,b) => b.ts > a.ts ? 1 : -1);
+  if (!all.length) { el.innerHTML = '<div class="log-line" style="color:var(--text2)">No logs yet</div>'; return; }
+  el.innerHTML = all.map(e =>
+    `<div class="log-line"><span class="log-ts">[${e.ts}]</span><b style="color:var(--accent)">[${e.thread}]</b> ${e.msg}</div>`
+  ).join('');
+}
+
+function update() {
+  fetch('/api/status').then(r => r.json()).then(d => {
+    data = d;
+    let s = d.system || {};
+    let mq = d.mqtt || {};
+    let mb = d.modbus || {};
+    let c3 = d.core3 || {};
+    let fd = d.fdd || {};
+    let [hStr, hCls] = healthStr(c3.health || 0);
+
+    // Overview
+    document.getElementById('overview-cards').innerHTML =
+      card('IP Address', s.ip || '—') +
+      card('Hostname', s.hostname || '—') +
+      card('Uptime', fmtUptime(s.uptime_sec || 0)) +
+      card('CPU Temp', (s.cpu_temp_c || 0).toFixed(1) + '°C',
+           s.cpu_temp_c > 70 ? 'bad' : s.cpu_temp_c > 55 ? 'warn' : 'ok') +
+      card('Health', hStr, hCls) +
+      card('MQTT', dot(mq.connected)) +
+      card('FDD Samples', fd.sample_n || 0) +
+      card('FDD Faults', fd.fault_count_total || 0, fd.fault_count_total > 0 ? 'warn' : 'ok');
+
+    if (d.logs) renderAllLogs('overview-logs', d.logs);
+
+    // MQTT
+    let lastPub = mq.last_pub ? new Date(mq.last_pub * 1000).toLocaleTimeString() : '—';
+    document.getElementById('mqtt-cards').innerHTML =
+      card('Status', dot(mq.connected)) +
+      card('Publish Count', mq.pub_count || 0) +
+      card('Last Publish', lastPub) +
+      card('Last Topic', mq.last_topic || '—');
+    if (d.logs) renderLogs('mqtt-logs', d.logs.mqtt);
+
+    // Modbus
+    document.getElementById('modbus-cards').innerHTML =
+      card('Listening', dot(mb.listening)) +
+      card('Client', dot(mb.client_connected)) +
+      card('Last Poll', mb.last_poll ? new Date(mb.last_poll*1000).toLocaleTimeString() : '—') +
+      card('Reg 0 (Press)', mb.regs ? mb.regs[0] : 0) +
+      card('Reg 1 (Temp)', mb.regs ? mb.regs[1] : 0) +
+      card('Reg 5 (Health)', mb.regs ? mb.regs[5] : 0);
+    if (d.logs) renderLogs('modbus-logs', d.logs.modbus);
+
+    // Core3
+    document.getElementById('core3-cards').innerHTML =
+      card('Core3 Dead', c3.core3_dead ? 'YES':'NO', c3.core3_dead ? 'bad':'ok') +
+      card('Consecutive Dead', c3.consecutive_dead || 0, c3.consecutive_dead > 5 ? 'warn':'') +
+      card('Restart Attempts', c3.restart_attempts || 0) +
+      card('Given Up', c3.given_up ? 'YES':'NO', c3.given_up ? 'bad':'ok') +
+      card('Health', hStr, hCls);
+    if (d.logs) renderLogs('core3-logs', d.logs.core3);
+
+    // FDD
+    let lastFault = fd.last_fault_ts ? new Date(fd.last_fault_ts*1000).toLocaleTimeString() : '—';
+    document.getElementById('fdd-cards').innerHTML =
+      card('Samples', fd.sample_n || 0) +
+      card('Warmup', fd.in_warmup ? 'YES':'NO', fd.in_warmup ? 'warn':'ok') +
+      card('Total Faults', fd.fault_count_total || 0, fd.fault_count_total > 0 ? 'warn':'ok') +
+      card('Last Algorithm', fd.last_fault_algo || '—') +
+      card('Last Fault', fd.last_fault_label || '—') +
+      card('Last Fault Time', lastFault);
+    if (d.logs) renderLogs('fdd-logs', d.logs.fdd);
+
+    // System
+    let ramPct = s.ram_total_kb ? ((1 - s.ram_avail_kb/s.ram_total_kb)*100).toFixed(0) : 0;
+    document.getElementById('system-cards').innerHTML =
+      card('IP', s.ip || '—') +
+      card('MAC', s.mac || '—') +
+      card('Hostname', s.hostname || '—') +
+      card('Kernel', s.kernel || '—') +
+      card('CPU Temp', (s.cpu_temp_c||0).toFixed(1)+'°C',
+           s.cpu_temp_c>70?'bad':s.cpu_temp_c>55?'warn':'ok') +
+      card('RAM Used', ramPct+'%', ramPct>80?'warn':'ok') +
+      card('RAM Available', Math.round((s.ram_avail_kb||0)/1024)+'MB') +
+      card('Storage Free', (s.storage_avail_mb||0)+'MB') +
+      card('Uptime', fmtUptime(s.uptime_sec||0)) +
+      card('Load Average', (s.load_avg||0).toFixed(2)) +
+      card('WiFi Signal', (s.wifi_signal_dbm||0)+'dBm',
+           s.wifi_signal_dbm>-50?'ok':s.wifi_signal_dbm>-70?'warn':'bad');
+
+  }).catch(e => {});
+}
+
+// SQLite viewer
+function loadEvents(page) {
+  if (page < 1) return;
+  currentPage = page;
+  let algo = document.getElementById('filter-algo').value;
+  let sensor = document.getElementById('filter-sensor').value;
+  let qs = `page=${page}&sort=${sortCol}&dir=${sortDir}`;
+  if (algo) qs += `&algo=${algo}`;
+  if (sensor) qs += `&sensor=${sensor}`;
+
+  fetch(`/api/fdd/events?${qs}`).then(r=>r.json()).then(d => {
+    let body = document.getElementById('events-body');
+    body.innerHTML = d.rows.map(r =>
+      `<tr><td>${r.id}</td><td>${r.ts}</td><td>${r.algorithm}</td>` +
+      `<td>${r.sensor}</td><td>${Number(r.value).toFixed(2)}</td>` +
+      `<td>${Number(r.score).toFixed(2)}</td><td>${r.fault_label}</td></tr>`
+    ).join('');
+    document.getElementById('page-info').textContent =
+      `Page ${d.page} of ${d.pages} (${d.total} rows)`;
+    document.getElementById('btn-prev').disabled = page <= 1;
+    document.getElementById('btn-next').disabled = page >= d.pages;
+
+    // Update filter dropdowns (keep current selection)
+    if (d.filters) {
+      let algoSel = document.getElementById('filter-algo');
+      let sensorSel = document.getElementById('filter-sensor');
+      let curAlgo = algoSel.value, curSensor = sensorSel.value;
+      algoSel.innerHTML = '<option value="">All Algorithms</option>' +
+        (d.filters.algorithms||[]).map(a => `<option value="${a}" ${a===curAlgo?'selected':''}>${a}</option>`).join('');
+      sensorSel.innerHTML = '<option value="">All Sensors</option>' +
+        (d.filters.sensors||[]).map(s => `<option value="${s}" ${s===curSensor?'selected':''}>${s}</option>`).join('');
+    }
+  }).catch(e => {});
+}
+
+function exportCSV() {
+  let algo = document.getElementById('filter-algo').value;
+  let sensor = document.getElementById('filter-sensor').value;
+  let qs = '';
+  if (algo) qs += `algo=${algo}&`;
+  if (sensor) qs += `sensor=${sensor}&`;
+  window.open(`/api/fdd/export.csv?${qs}`, '_blank');
+}
+
+// Column sort
+document.getElementById('events-head').addEventListener('click', e => {
+  let col = e.target.dataset.col;
+  if (!col) return;
+  if (sortCol === col) sortDir = sortDir === 'DESC' ? 'ASC' : 'DESC';
+  else { sortCol = col; sortDir = 'DESC'; }
+  loadEvents(1);
+});
+
+// Hash routing
+window.addEventListener('hashchange', () => {
+  let h = location.hash.replace('#','') || 'overview';
+  show(h);
+});
+if (location.hash) show(location.hash.replace('#',''));
+
+// Auto-refresh
+update();
+setInterval(update, 10000);
+
+// ========== FDD Analysis Charts ==========
+const algoColors = {
+  zscore:'#e94560', cusum:'#f39c12', dtdt:'#2ecc71', iqr:'#3498db',
+  holt:'#9b59b6', mahalanobis:'#e67e22', welford:'#1abc9c', ewma:'#34495e'
+};
+let chartInstances = {};
+
+function destroyChart(id) {
+  if (chartInstances[id]) { chartInstances[id].destroy(); delete chartInstances[id]; }
+}
+
+function loadAnalysis() {
+  document.getElementById('analysis-info').textContent = 'Loading...';
+  fetch('/api/fdd/analysis').then(r=>r.json()).then(d => {
+    document.getElementById('analysis-info').textContent =
+      'Last refreshed: ' + new Date().toLocaleTimeString();
+
+    // --- Summary bar chart ---
+    destroyChart('chart-summary');
+    let algos = Object.keys(d.summary || {});
+    let counts = algos.map(a => d.summary[a]);
+    let colors = algos.map(a => algoColors[a] || '#888');
+    chartInstances['chart-summary'] = new Chart(
+      document.getElementById('chart-summary'), {
+        type: 'bar',
+        data: {
+          labels: algos,
+          datasets: [{
+            label: 'Fault Count',
+            data: counts,
+            backgroundColor: colors,
+            borderRadius: 4
+          }]
+        },
+        options: {
+          responsive: true,
+          plugins: { legend: { display: false } },
+          scales: {
+            x: { ticks: { color: '#aaa' }, grid: { color: '#234' } },
+            y: { ticks: { color: '#aaa' }, grid: { color: '#234' }, beginAtZero: true }
+          }
+        }
+      }
+    );
+
+    // --- Timeline scatter ---
+    destroyChart('chart-timeline');
+    let timeline = (d.timeline || []).reverse();
+    let tlAlgos = [...new Set(timeline.map(e => e.algo))];
+    let tlDatasets = tlAlgos.map(algo => ({
+      label: algo,
+      data: timeline.filter(e => e.algo === algo).map(e => ({
+        x: e.ts, y: Math.abs(e.score)
+      })),
+      backgroundColor: algoColors[algo] || '#888',
+      pointRadius: 5,
+      pointHoverRadius: 7
+    }));
+    chartInstances['chart-timeline'] = new Chart(
+      document.getElementById('chart-timeline'), {
+        type: 'scatter',
+        data: { datasets: tlDatasets },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { labels: { color: '#eee', font: { size: 11 } } },
+            tooltip: {
+              callbacks: {
+                label: ctx => {
+                  let pt = timeline.filter(e => e.algo === ctx.dataset.label)
+                    .find(e => e.ts === ctx.raw.x);
+                  return `${ctx.dataset.label}: score=${ctx.raw.y.toFixed(2)} ${pt ? pt.sensor+' '+pt.fault : ''}`;
+                }
+              }
+            }
+          },
+          scales: {
+            x: {
+              type: 'category',
+              labels: [...new Set(timeline.map(e => e.ts))],
+              ticks: { color: '#aaa', maxRotation: 45, maxTicksLimit: 20, font: { size: 10 } },
+              grid: { color: '#234' }
+            },
+            y: {
+              title: { display: true, text: '|Score|', color: '#aaa' },
+              ticks: { color: '#aaa' }, grid: { color: '#234' }, beginAtZero: true
+            }
+          }
+        }
+      }
+    );
+
+    // --- Per-algorithm score charts ---
+    let grid = document.getElementById('algo-charts-grid');
+    grid.innerHTML = '';
+    let algoKeys = Object.keys(d.algorithms || {});
+    algoKeys.forEach(algo => {
+      let events = (d.algorithms[algo] || []).reverse();
+      if (!events.length) return;
+
+      let div = document.createElement('div');
+      div.className = 'chart-card';
+      div.innerHTML = `<h4>${algo} — Score over Time (last ${events.length})</h4>` +
+        `<canvas id="chart-algo-${algo}" height="180"></canvas>`;
+      grid.appendChild(div);
+
+      let pressData = events.filter(e => e.sensor === 'pressure' || e.sensor === 'both');
+      let tempData = events.filter(e => e.sensor === 'temp' || e.sensor === 'both');
+
+      let datasets = [];
+      if (pressData.length) datasets.push({
+        label: 'Pressure', data: pressData.map(e => Math.abs(e.score)),
+        borderColor: '#e94560', backgroundColor: 'rgba(233,69,96,0.1)',
+        fill: true, tension: 0.3, pointRadius: 3
+      });
+      if (tempData.length) datasets.push({
+        label: 'Temperature', data: tempData.map(e => Math.abs(e.score)),
+        borderColor: '#3498db', backgroundColor: 'rgba(52,152,219,0.1)',
+        fill: true, tension: 0.3, pointRadius: 3
+      });
+      if (!pressData.length && !tempData.length) datasets.push({
+        label: 'Score', data: events.map(e => Math.abs(e.score)),
+        borderColor: algoColors[algo] || '#888',
+        backgroundColor: 'rgba(255,255,255,0.05)',
+        fill: true, tension: 0.3, pointRadius: 3
+      });
+
+      let longestSet = pressData.length >= tempData.length ? pressData : tempData;
+      if (!longestSet.length) longestSet = events;
+
+      destroyChart('chart-algo-'+algo);
+      chartInstances['chart-algo-'+algo] = new Chart(
+        document.getElementById('chart-algo-'+algo), {
+          type: 'line',
+          data: {
+            labels: longestSet.map(e => e.ts.split(' ')[1] || e.ts),
+            datasets
+          },
+          options: {
+            responsive: true,
+            plugins: {
+              legend: { labels: { color: '#eee', font: { size: 10 } } },
+              tooltip: {
+                callbacks: {
+                  afterLabel: ctx => {
+                    let src = pressData.length >= tempData.length ? pressData : (tempData.length ? tempData : events);
+                    let e = src[ctx.dataIndex];
+                    return e ? `Fault: ${e.fault}  Value: ${e.value.toFixed(1)}` : '';
+                  }
+                }
+              }
+            },
+            scales: {
+              x: { ticks: { color: '#aaa', maxRotation: 45, maxTicksLimit: 15, font:{size:9} }, grid:{color:'#234'} },
+              y: { title:{display:true,text:'|Score|',color:'#aaa'}, ticks:{color:'#aaa'}, grid:{color:'#234'}, beginAtZero:true }
+            }
+          }
+        }
+      );
+    });
+
+  }).catch(e => {
+    document.getElementById('analysis-info').textContent = 'Error loading data';
+  });
+}
+</script>
+</body>
+</html>
