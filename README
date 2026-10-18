@@ -5,41 +5,61 @@ Please see the corresponding sections below for details.
 Dependencies
 ============
 
-  URI: <first dependency>
-  branch: <branch name>
-
-  URI: <second dependency>
-  branch: <branch name>
-
-  .
-  .
-  .
+  URI: openembedded-core (poky)
+  branch: scarthgap
 
 Patches
 =======
 
+Please submit any patches against the meta-sanjo layer by opening a pull
+request or issue on the GitHub repository.
 
-
-Please submit any patches against the meta-sanjo layer to the xxxx mailing list (xxxx@zzzz.org)
-and cc: the maintainer:
-
-Maintainer: XXX YYYYYY <xxx.yyyyyy@zzzzz.com>
+Maintainer: Sanjo Sunny <sanjosunny2001@gmail.com>
 
 Table of Contents
 =================
 
   I. Adding the meta-sanjo layer to your build
- II. Misc
+ II. Layer contents
+III. Misc
 
 
 I. Adding the meta-sanjo layer to your build
-=================================================sanjo
+=============================================
+
 source poky/oe-init-build-env build
+bitbake-layers add-layer meta-sanjo
 bitbake core-image-minimal
 
-Run 'bitbake-layers add-layer meta-sanjo'
+II. Layer contents
+===================
 
-II. Misc
-========
+recipes-bmp280/
+  bmp280 — BMP280 telemetry: IPC driver + Core 3 bare-metal writer + firstboot service.
 
---- replace with specific information about the meta-sanjo layer ---
+recipes-bsp/
+  bootfiles — board boot file customizations.
+
+recipes-connectivity/
+  wpa-supplicant — Wi-Fi configuration (wpa_supplicant.conf uses placeholder
+  ssid/psk; override with real credentials via a local bbappend, do not
+  commit real credentials to this layer).
+
+recipes-core/
+  images — core-image-minimal.bbappend customizing the base image.
+
+recipes-example/
+  example — starter recipe template created by bitbake-layers.
+
+recipes-kernel/
+  kernel-devsrc — kernel development source customizations.
+
+recipes-telemetry/
+  telemetry-daemon — telemetry daemon and web dashboard: reads the BMP280
+  ring buffer, publishes system/board health over MQTT, and serves a
+  lightweight HTTP dashboard.
+
+III. Misc
+=========
+
+Target: Raspberry Pi, Yocto "scarthgap" release.
